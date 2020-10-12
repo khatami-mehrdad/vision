@@ -271,6 +271,7 @@ def parse_args():
     parser.add_argument('--resume', default='', help='resume from checkpoint')
     parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                         help='start epoch')
+    parser.add_argument('--prune', action='store_true', help='use pruning')
     parser.add_argument(
         "--cache-dataset",
         dest="cache_dataset",
