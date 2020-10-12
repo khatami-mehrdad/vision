@@ -16,13 +16,14 @@ except ImportError:
     amp = None
 
 
-def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, print_freq, apex=False):
+def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, print_freq, apex=False, dgPruner=None, output_dir = ''):
     model.train()
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value}'))
     metric_logger.add_meter('img/s', utils.SmoothedValue(window_size=10, fmt='{value}'))
 
     header = 'Epoch: [{}]'.format(epoch)
+    batch_idx = 0
     for image, target in metric_logger.log_every(data_loader, print_freq, header):
         start_time = time.time()
         image, target = image.to(device), target.to(device)
@@ -43,6 +44,14 @@ def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, pri
         metric_logger.meters['acc1'].update(acc1.item(), n=batch_size)
         metric_logger.meters['acc5'].update(acc5.item(), n=batch_size)
         metric_logger.meters['img/s'].update(batch_size / (time.time() - start_time))
+
+        # Mehrdad
+        if ( args.prune and ( (batch_idx % dgPruner.num_iter_per_update( len(data_loader) ) ) == 0) ):
+            dgPruner.dump_growth_stat(output_dir, epoch)
+            dgPruner.prune_n_reset( epoch + batch_idx / len(data_loader) )
+            dgPruner.dump_sparsity_stat(model, output_dir, epoch)
+        batch_idx = batch_idx + 1
+        # 
 
 
 def evaluate(model, criterion, data_loader, device, print_freq=100):
@@ -195,6 +204,17 @@ def main(args):
         lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
         args.start_epoch = checkpoint['epoch'] + 1
 
+    # Mehrdad
+    from DG_Prune import DG_Pruner, TaylorImportance, MagnitudeImportance, RigLImportance
+    dgPruner = None
+    if args.prune:
+        dgPruner = DG_Pruner()
+        model = dgPruner.swap_prunable_modules(model)
+        # dgPruner.dump_sparsity_stat(model, output_dir, 0)
+        pruners = dgPruner.pruners_from_file('DG_Prune/rigl_resnet50.json')
+        hooks = dgPruner.add_custom_pruning(model, RigLImportance)
+    #
+
     if args.test_only:
         evaluate(model, criterion, data_loader_test, device=device)
         return
@@ -204,7 +224,7 @@ def main(args):
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             train_sampler.set_epoch(epoch)
-        train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, args.print_freq, args.apex)
+        train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, args.print_freq, args.apex, dgPruner=dgPruner, output_dir=args.output_dir)
         lr_scheduler.step()
         evaluate(model, criterion, data_loader_test, device=device)
         if args.output_dir:
