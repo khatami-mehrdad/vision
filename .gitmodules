@@ -1,0 +1,3 @@
+[submodule "references/classification/DG_Prune"]
+	path = references/classification/DG_Prune
+	url = https://github.com/khatami-mehrdad/DG_Prune.git
