@@ -24,3 +24,5 @@ gen.yml
 .vscode/
 *.orig
 *-checkpoint.ipynb
+references/classification/*/*.json
+*.pth
