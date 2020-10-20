@@ -55,14 +55,18 @@ def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, pri
         # 
 
 
-def evaluate(model, criterion, data_loader, device, print_freq=100):
+def evaluate(model, criterion, data_loader, device, print_freq=100, dgPruner=None, output_dir = ''):
     model.eval()
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = 'Test:'
     with torch.no_grad():
+        if (dgPruner):
+            dgPruner.dump_growth_stat(output_dir, 1000)
+            dgPruner.dump_sparsity_stat(model, output_dir, 1000)
+
         for image, target in metric_logger.log_every(data_loader, print_freq, header):
-            image = image.to(device, non_blocking=True)
-            target = target.to(device, non_blocking=True)
+            image = image.to(device)
+            target = target.to(device)
             output = model(image)
             loss = criterion(output, target)
 
@@ -200,13 +204,6 @@ def main(args):
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
         model_without_ddp = model.module
 
-    if args.resume:
-        checkpoint = torch.load(args.resume, map_location='cpu')
-        model_without_ddp.load_state_dict(checkpoint['model'])
-        optimizer.load_state_dict(checkpoint['optimizer'])
-        lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
-        args.start_epoch = checkpoint['epoch'] + 1
-
     # Mehrdad
     from DG_Prune import DG_Pruner, TaylorImportance, MagnitudeImportance, RigLImportance
     dgPruner = None
@@ -218,8 +215,15 @@ def main(args):
         hooks = dgPruner.add_custom_pruning(model, RigLImportance)
     #
 
+    if args.resume:
+        checkpoint = torch.load(args.resume, map_location='cpu')
+        model_without_ddp.load_state_dict(checkpoint['model'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+        args.start_epoch = checkpoint['epoch'] + 1
+
     if args.test_only:
-        evaluate(model, criterion, data_loader_test, device=device)
+        evaluate(model, criterion, data_loader_test, device=device, dgPruner=dgPruner, output_dir=args.output_dir)
         return
 
     print("Start training")
@@ -229,7 +233,7 @@ def main(args):
             train_sampler.set_epoch(epoch)
         train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, args.print_freq, args.apex, dgPruner=dgPruner, output_dir=args.output_dir)
         lr_scheduler.step()
-        evaluate(model, criterion, data_loader_test, device=device)
+        evaluate(model, criterion, data_loader_test, device=device, dgPruner=dgPruner, output_dir=args.output_dir)
         if args.output_dir:
             checkpoint = {
                 'model': model_without_ddp.state_dict(),
@@ -262,7 +266,7 @@ def parse_args():
     parser.add_argument('-j', '--workers', default=16, type=int, metavar='N',
                         help='number of data loading workers (default: 16)')
     parser.add_argument('--lr', default=0.1, type=float, help='initial learning rate')
-    parser.add_argument('--lrf', default=1e-4, type=float, help='final learning rate')
+    parser.add_argument('--lrf', default=5e-5, type=float, help='final learning rate')
 
     parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                         help='momentum')
