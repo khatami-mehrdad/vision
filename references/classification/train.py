@@ -223,7 +223,7 @@ def main(args):
         args.start_epoch = checkpoint['epoch'] + 1
 
     if args.test_only:
-        evaluate(model, criterion, data_loader_test, device=device, dgPruner=dgPruner, output_dir=args.output_dir)
+        evaluate(model, criterion, data_loader_test, device=device, print_freq=args.print_freq, dgPruner=dgPruner, output_dir=args.output_dir)
         return
 
     print("Start training")
@@ -233,7 +233,7 @@ def main(args):
             train_sampler.set_epoch(epoch)
         train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, args.print_freq, args.apex, dgPruner=dgPruner, output_dir=args.output_dir)
         lr_scheduler.step()
-        evaluate(model, criterion, data_loader_test, device=device, dgPruner=dgPruner, output_dir=args.output_dir)
+        evaluate(model, criterion, data_loader_test, device=device, print_freq=args.print_freq, dgPruner=dgPruner, output_dir=args.output_dir)
         if args.output_dir:
             checkpoint = {
                 'model': model_without_ddp.state_dict(),
