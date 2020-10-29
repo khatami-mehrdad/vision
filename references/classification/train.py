@@ -51,6 +51,8 @@ def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, pri
             dgPruner.dump_growth_stat(output_dir, epoch)
             dgPruner.prune_n_reset( epoch + batch_idx / len(data_loader) )
             dgPruner.dump_sparsity_stat(model, output_dir, epoch)
+        # if (args.prune):
+        #     dgPruner.apply_mask_to_weight()
         batch_idx = batch_idx + 1
         # 
 
@@ -182,6 +184,18 @@ def main(args):
     print("Creating model")
     model = torchvision.models.__dict__[args.model](pretrained=args.pretrained)
     model.to(device)
+
+    # Mehrdad
+    from DG_Prune import DG_Pruner, TaylorImportance, MagnitudeImportance, RigLImportance
+    dgPruner = None
+    if args.prune:
+        dgPruner = DG_Pruner()
+        model = dgPruner.swap_prunable_modules(model)
+        dgPruner.dump_sparsity_stat(model, args.output_dir, 0)
+        pruners = dgPruner.pruners_from_file('DG_Prune/rigl_resnet50.json')
+        hooks = dgPruner.add_custom_pruning(model, RigLImportance)
+    #
+
     if args.distributed and args.sync_bn:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
 
@@ -203,17 +217,6 @@ def main(args):
     if args.distributed:
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
         model_without_ddp = model.module
-
-    # Mehrdad
-    from DG_Prune import DG_Pruner, TaylorImportance, MagnitudeImportance, RigLImportance
-    dgPruner = None
-    if args.prune:
-        dgPruner = DG_Pruner()
-        model = dgPruner.swap_prunable_modules(model)
-        # dgPruner.dump_sparsity_stat(model, output_dir, 0)
-        pruners = dgPruner.pruners_from_file('DG_Prune/rigl_resnet50.json')
-        hooks = dgPruner.add_custom_pruning(model, RigLImportance)
-    #
 
     if args.resume:
         checkpoint = torch.load(args.resume, map_location='cpu')
