@@ -192,7 +192,7 @@ def main(args):
         dgPruner = DG_Pruner()
         model = dgPruner.swap_prunable_modules(model)
         dgPruner.dump_sparsity_stat(model, args.output_dir, 0)
-        pruners = dgPruner.pruners_from_file('DG_Prune/rigl_resnet50.json')
+        pruners = dgPruner.pruners_from_file('DG_Prune/lth_resnet50.json')
         hooks = dgPruner.add_custom_pruning(model, RigLImportance)
     #
 
