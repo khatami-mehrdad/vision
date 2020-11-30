@@ -47,10 +47,10 @@ def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, pri
         metric_logger.meters['img/s'].update(batch_size / (time.time() - start_time))
 
         # Mehrdad
-        if ( args.prune and ( (batch_idx % dgPruner.num_iter_per_update( len(data_loader) ) ) == 0) ):
-            dgPruner.dump_growth_stat(output_dir, epoch)
-            dgPruner.prune_n_reset( epoch + batch_idx / len(data_loader) )
-            dgPruner.dump_sparsity_stat(model, output_dir, epoch)
+        # if ( args.prune and ( (batch_idx % dgPruner.num_iter_per_update( len(data_loader) ) ) == 0) ):
+        #     dgPruner.dump_growth_stat(output_dir, epoch)
+        #     dgPruner.prune_n_reset( epoch + batch_idx / len(data_loader) )
+        #     dgPruner.dump_sparsity_stat(model, output_dir, epoch)
         # if (args.prune):
         #     dgPruner.apply_mask_to_weight()
         batch_idx = batch_idx + 1
@@ -237,6 +237,12 @@ def main(args):
         train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, args.print_freq, args.apex, dgPruner=dgPruner, output_dir=args.output_dir)
         lr_scheduler.step()
         evaluate(model, criterion, data_loader_test, device=device, print_freq=args.print_freq, dgPruner=dgPruner, output_dir=args.output_dir)
+        # Mehrdad: LTH, pruning in the end
+        if (args.prune) and (epoch == args.epochs - 1):
+            dgPruner.prune_n_reset( epoch )
+            dgPruner.dump_sparsity_stat(model, args.output_dir, epoch)
+            dgPruner.apply_mask_to_weight()
+        #
         if args.output_dir:
             checkpoint = {
                 'model': model_without_ddp.state_dict(),
