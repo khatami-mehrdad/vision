@@ -231,31 +231,50 @@ def main(args):
 
     print("Start training")
     start_time = time.time()
-    for epoch in range(args.start_epoch, args.epochs):
-        if args.distributed:
-            train_sampler.set_epoch(epoch)
-        train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, args.print_freq, args.apex, dgPruner=dgPruner, output_dir=args.output_dir)
-        lr_scheduler.step()
-        evaluate(model, criterion, data_loader_test, device=device, print_freq=args.print_freq, dgPruner=dgPruner, output_dir=args.output_dir)
-        # Mehrdad: LTH, pruning in the end
-        if (args.prune) and (epoch == args.epochs - 1):
-            dgPruner.prune_n_reset( epoch )
-            dgPruner.dump_sparsity_stat(model, args.output_dir, epoch)
-            dgPruner.apply_mask_to_weight()
-        #
-        if args.output_dir:
-            checkpoint = {
-                'model': model_without_ddp.state_dict(),
-                'optimizer': optimizer.state_dict(),
-                'lr_scheduler': lr_scheduler.state_dict(),
-                'epoch': epoch,
-                'args': args}
-            utils.save_on_master(
-                checkpoint,
-                os.path.join(args.output_dir, 'model_{}.pth'.format(epoch)))
-            utils.save_on_master(
-                checkpoint,
-                os.path.join(args.output_dir, 'checkpoint.pth'))
+    for lth_stage in range(0, self.pruners[0].num_stages + 1):
+        if (lth_stage != 0):
+            checkpoint = dgPruner.rewind_masked_checkpoint()
+            model_without_ddp.load_state_dict(checkpoint['model'])
+            optimizer.load_state_dict(checkpoint['optimizer'])
+            lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+            args.start_epoch = checkpoint['epoch'] + 1
+
+        for epoch in range(args.start_epoch, args.epochs):
+            if args.distributed:
+                train_sampler.set_epoch(epoch)
+            train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, args.print_freq, args.apex, dgPruner=dgPruner, output_dir=args.output_dir)
+            lr_scheduler.step()
+            evaluate(model, criterion, data_loader_test, device=device, print_freq=args.print_freq, dgPruner=dgPruner, output_dir=args.output_dir)
+
+            if args.output_dir:
+                checkpoint = {
+                    'model': model_without_ddp.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'lr_scheduler': lr_scheduler.state_dict(),
+                    'epoch': epoch,
+                    'args': args}
+                utils.save_on_master(
+                    checkpoint,
+                    os.path.join(args.output_dir, 'model_{}.pth'.format(epoch)))
+                utils.save_on_master(
+                    checkpoint,
+                    os.path.join(args.output_dir, 'checkpoint.pth'))
+            # Mehrdad: LTH, pruning in the end
+            if (args.prune):
+                checkpoint = {
+                    'model': model_without_ddp.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'lr_scheduler': lr_scheduler.state_dict(),
+                    'epoch': epoch,
+                    'args': args} 
+                if (epoch == args.epochs - 1):
+                    dgPruner.prune_n_reset( epoch )
+                    dgPruner.dump_sparsity_stat(model, args.output_dir, epoch)
+                    dgPruner.apply_mask_to_weight()
+                    dgPruner.save_final_checkpoint(checkpoint)
+                # Save checkpoints
+                if (lth_stage == 0) and (epoch == dgPruner.rewind_epoch(args.epochs)):
+                    dgPruner.save_rewind_checkpoint(checkpoint)
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
