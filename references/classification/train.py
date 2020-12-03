@@ -190,6 +190,11 @@ def main(args):
     val_dir = os.path.join(args.data_path, 'val')
     dataset, dataset_test, train_sampler, test_sampler = load_data(train_dir, val_dir,
                                                                    args.cache_dataset, args.distributed)
+    dataset.samples = [dataset.samples[idx] for idx in range(1024)]
+    dataset.targets = [dataset.targets[idx] for idx in range(1024)]
+    dataset_test.samples = [dataset.samples[idx] for idx in range(1024)]
+    dataset_test.targets = [dataset.targets[idx] for idx in range(1024)]
+                                                                   
     data_loader = torch.utils.data.DataLoader(
         dataset, batch_size=args.batch_size,
         sampler=train_sampler, num_workers=args.workers, pin_memory=True)
@@ -253,13 +258,14 @@ def main(args):
 
     print("Start training")
     start_time = time.time()
-    for lth_stage in range(0, self.pruners[0].num_stages + 1):
+    for lth_stage in range(0, dgPruner.num_stages() + 1):
         if (lth_stage != 0):
             checkpoint = dgPruner.rewind_masked_checkpoint()
             model_without_ddp.load_state_dict(checkpoint['model'])
             optimizer.load_state_dict(checkpoint['optimizer'])
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
             args.start_epoch = checkpoint['epoch'] + 1
+            dgPruner.dump_sparsity_stat(model, args.output_dir, lth_stage * 10000)
 
         for epoch in range(args.start_epoch, args.epochs):
             if args.distributed:
@@ -283,20 +289,23 @@ def main(args):
                     os.path.join(args.output_dir, 'checkpoint.pth'))
             # Mehrdad: LTH, pruning in the end
             if (args.prune):
+
+                if (epoch == args.epochs - 1):
+                    dgPruner.prune_n_reset( epoch )
+                    dgPruner.dump_sparsity_stat(model, args.output_dir, epoch)
+                    dgPruner.apply_mask_to_weight()
                 checkpoint = {
                     'model': model_without_ddp.state_dict(),
                     'optimizer': optimizer.state_dict(),
                     'lr_scheduler': lr_scheduler.state_dict(),
                     'epoch': epoch,
                     'args': args} 
-                if (epoch == args.epochs - 1):
-                    dgPruner.prune_n_reset( epoch )
-                    dgPruner.dump_sparsity_stat(model, args.output_dir, epoch)
-                    dgPruner.apply_mask_to_weight()
-                    dgPruner.save_final_checkpoint(checkpoint)
+                    
                 # Save checkpoints
                 if (lth_stage == 0) and (epoch == dgPruner.rewind_epoch(args.epochs)):
                     dgPruner.save_rewind_checkpoint(checkpoint)
+                if (epoch == args.epochs - 1):
+                    dgPruner.save_final_checkpoint(checkpoint)
 
             update_summary(
                 epoch, train_metrics, eval_metrics, os.path.join(args.output_dir, 'summary.csv') )
