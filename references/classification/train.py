@@ -2,6 +2,8 @@ import datetime
 import os
 import time
 import math
+import csv
+from collections import OrderedDict
 
 import torch
 import torch.utils.data
@@ -16,6 +18,16 @@ try:
 except ImportError:
     amp = None
 
+
+def update_summary(epoch, train_metrics, eval_metrics, filename, write_header=False):
+    rowd = OrderedDict(epoch=epoch)
+    rowd.update([('train_' + k, v) for k, v in train_metrics.items()])
+    rowd.update([('eval_' + k, v) for k, v in eval_metrics.items()])
+    with open(filename, mode='a') as cf:
+        dw = csv.DictWriter(cf, fieldnames=rowd.keys())
+        if write_header:  # first iteration (epoch == 1 can't be used)
+            dw.writeheader()
+        dw.writerow(rowd)
 
 def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, print_freq, apex=False, dgPruner=None, output_dir = ''):
     model.train()
@@ -55,6 +67,8 @@ def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, pri
         #     dgPruner.apply_mask_to_weight()
         batch_idx = batch_idx + 1
         # 
+    metrics = OrderedDict([('loss', metric_logger.loss), ('top1', metric_logger.acc1), ('top5', metric_logger.acc5)])
+    return metrics
 
 
 def evaluate(model, criterion, data_loader, device, print_freq=100, dgPruner=None, output_dir = ''):
@@ -84,7 +98,10 @@ def evaluate(model, criterion, data_loader, device, print_freq=100, dgPruner=Non
 
     print(' * Acc@1 {top1.global_avg:.3f} Acc@5 {top5.global_avg:.3f}'
           .format(top1=metric_logger.acc1, top5=metric_logger.acc5))
-    return metric_logger.acc1.global_avg
+
+    metrics = OrderedDict([('loss', metric_logger.loss), ('top1', metric_logger.acc1), ('top5', metric_logger.acc5)])
+
+    return metrics
 
 
 def _get_cache_path(filepath):
@@ -181,6 +198,11 @@ def main(args):
         dataset_test, batch_size=args.batch_size,
         sampler=test_sampler, num_workers=args.workers, pin_memory=True)
 
+    dataset.samples = [dataset.samples[idx] for idx in range(1000)]
+    dataset.targets = [dataset.targets[idx] for idx in range(1000)]
+    dataset_test.samples = [dataset.samples[idx] for idx in range(100)]
+    dataset_test.targets = [dataset.targets[idx] for idx in range(100)]
+
     print("Creating model")
     model = torchvision.models.__dict__[args.model](pretrained=args.pretrained)
     model.to(device)
@@ -242,9 +264,9 @@ def main(args):
         for epoch in range(args.start_epoch, args.epochs):
             if args.distributed:
                 train_sampler.set_epoch(epoch)
-            train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, args.print_freq, args.apex, dgPruner=dgPruner, output_dir=args.output_dir)
+            train_metrics = train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, args.print_freq, args.apex, dgPruner=dgPruner, output_dir=args.output_dir)
             lr_scheduler.step()
-            evaluate(model, criterion, data_loader_test, device=device, print_freq=args.print_freq, dgPruner=dgPruner, output_dir=args.output_dir)
+            eval_metrics = evaluate(model, criterion, data_loader_test, device=device, print_freq=args.print_freq, dgPruner=dgPruner, output_dir=args.output_dir)
 
             if args.output_dir:
                 checkpoint = {
@@ -275,6 +297,9 @@ def main(args):
                 # Save checkpoints
                 if (lth_stage == 0) and (epoch == dgPruner.rewind_epoch(args.epochs)):
                     dgPruner.save_rewind_checkpoint(checkpoint)
+
+            update_summary(
+                epoch, train_metrics, eval_metrics, os.path.join(args.output_dir, 'summary.csv') )
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
