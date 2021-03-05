@@ -71,15 +71,11 @@ def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, pri
     return metrics
 
 
-def evaluate(model, criterion, data_loader, device, print_freq=100, dgPruner=None, output_dir = ''):
+def evaluate(model, criterion, data_loader, device, print_freq=100, output_dir = ''):
     model.eval()
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = 'Test:'
     with torch.no_grad():
-        if (dgPruner):
-            dgPruner.dump_growth_stat(output_dir, 1000)
-            dgPruner.dump_sparsity_stat(model, output_dir, 1000)
-
         for image, target in metric_logger.log_every(data_loader, print_freq, header):
             image = image.to(device)
             target = target.to(device)
@@ -261,67 +257,12 @@ def main(args):
         lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
         args.start_epoch = checkpoint['epoch'] + 1
 
-    if args.test_only:
-        evaluate(model, criterion, data_loader_test, device=device, print_freq=args.print_freq, dgPruner=dgPruner, output_dir=args.output_dir)
-        return
-
-    print("Start training")
-    start_time = time.time()
-    for lth_stage in range(0, dgPruner.num_stages() + 1):
-        if (lth_stage != 0):
-            checkpoint = dgPruner.rewind_masked_checkpoint()
-            model_without_ddp.load_state_dict(checkpoint['model'])
-            optimizer.load_state_dict(checkpoint['optimizer'])
-            lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
-            args.start_epoch = checkpoint['epoch'] + 1
-            dgPruner.dump_sparsity_stat(model, args.output_dir, lth_stage * 10000)
-
-        for epoch in range(args.start_epoch, args.epochs):
-            if args.distributed:
-                train_sampler.set_epoch(epoch)
-            train_metrics = train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, args.print_freq, args.apex, dgPruner=dgPruner, output_dir=args.output_dir)
-            lr_scheduler.step()
-            eval_metrics = evaluate(model, criterion, data_loader_test, device=device, print_freq=args.print_freq, dgPruner=dgPruner, output_dir=args.output_dir)
-
-            if args.output_dir:
-                checkpoint = {
-                    'model': model_without_ddp.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'lr_scheduler': lr_scheduler.state_dict(),
-                    'epoch': epoch,
-                    'args': args}
-                utils.save_on_master(
-                    checkpoint,
-                    os.path.join(args.output_dir, 'model_{}.pth'.format(epoch)))
-                utils.save_on_master(
-                    checkpoint,
-                    os.path.join(args.output_dir, 'checkpoint.pth'))
-            # Mehrdad: LTH, pruning in the end
-            if (args.prune):
-                
-                if (epoch == args.epochs - 1):
-                    dgPruner.prune_n_reset( epoch )
-                    dgPruner.dump_sparsity_stat(model, args.output_dir, epoch)
-                    dgPruner.apply_mask_to_weight()
-                checkpoint = {
-                    'model': model_without_ddp.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'lr_scheduler': lr_scheduler.state_dict(),
-                    'epoch': epoch,
-                    'args': args} 
-                    
-                # Save checkpoints
-                if (lth_stage == 0) and (epoch == dgPruner.rewind_epoch(args.epochs)):
-                    dgPruner.save_rewind_checkpoint(checkpoint)
-                if (epoch == args.epochs - 1):
-                    dgPruner.save_final_checkpoint(checkpoint)
-
-            update_summary(
-                epoch, train_metrics, eval_metrics, os.path.join(args.output_dir, 'summary.csv') )
-
-    total_time = time.time() - start_time
-    total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-    print('Training time {}'.format(total_time_str))
+    write_header = True
+    while (not dgPruner.sense_done()):
+        eval_metrics = evaluate(model, criterion, data_loader_test, device=device, print_freq=args.print_freq, output_dir=args.output_dir)
+        dgPruner.update_summary(eval_metrics, os.path.join(args.output_dir, 'summary.csv'), write_header=write_header)
+        write_header = False
+        dgPruner.apply_sensitivity_step()
 
 
 def parse_args():
