@@ -204,8 +204,13 @@ def main(args):
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
         model_without_ddp = model.module
 
-    # Mehrdad
-    from DG_Prune import DG_Pruner, TaylorImportance, MagnitudeImportance, RigLImportance
+    # Mehrdad: Fuse
+    from DG_Prune.FuseHook import Fuse_Hook, get_modules_to_fuse
+    # from torch.quantization.fuse_modules import fuse_modules
+
+    # model_fused = fuse_modules(model, h.modules_to_fuse, inplace=False, fuser_func=modified_fuse_known_modules )
+    # Mehrdad: Prune
+    from DG_Prune import DG_Pruner, TaylorImportance, MagnitudeImportance, RigLImportance, PrunableConv2d
     dgPruner = None
     if args.prune:
         dgPruner = DG_Pruner()
@@ -214,6 +219,13 @@ def main(args):
         pruners = dgPruner.pruners_from_file('DG_Prune/rigl_resnet50.json')
         hooks = dgPruner.add_custom_pruning(model, RigLImportance)
     #
+    fuse_type_list = [ [PrunableConv2d, nn.BatchNorm2d] ]
+    for image, _ in data_loader_test:
+        sample_image = image[0].unsqueeze(0)
+        break
+    modules_to_fuse = get_modules_to_fuse(model, fuse_type_list, sample_image)
+
+    dgPruner.attach_bn_to_prunables(model, modules_to_fuse)
 
     if args.resume:
         checkpoint = torch.load(args.resume, map_location='cpu')
