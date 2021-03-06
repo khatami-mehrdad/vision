@@ -186,15 +186,9 @@ def main(args):
     val_dir = os.path.join(args.data_path, 'val')
     dataset, dataset_test, train_sampler, test_sampler = load_data(train_dir, val_dir,
                                                                    args.cache_dataset, args.distributed)
-    # dataset.samples = [dataset.samples[idx] for idx in range(1024)]
-    # dataset.targets = [dataset.targets[idx] for idx in range(1024)]
     # dataset_test.samples = [dataset.samples[idx] for idx in range(1024)]
     # dataset_test.targets = [dataset.targets[idx] for idx in range(1024)]
                                                                    
-    data_loader = torch.utils.data.DataLoader(
-        dataset, batch_size=args.batch_size,
-        sampler=train_sampler, num_workers=args.workers, pin_memory=True)
-
     data_loader_test = torch.utils.data.DataLoader(
         dataset_test, batch_size=args.batch_size,
         sampler=test_sampler, num_workers=args.workers, pin_memory=True)
@@ -203,17 +197,8 @@ def main(args):
     model = torchvision.models.__dict__[args.model](pretrained=args.pretrained)
     model.to(device)
 
-    # Mehrdad: Fuse
-    # from DG_Prune.FuseHook import FuseHook, modified_fuse_known_modules
-    # from torch.quantization.fuse_modules import fuse_modules
-    # model.eval()
-    # h = FuseHook(model)
-    # for image, target in data_loader_test:
-    #     output_test = model(image[0].unsqueeze(0))
-    #     break
-    # model_fused = fuse_modules(model, h.modules_to_fuse, inplace=False, fuser_func=modified_fuse_known_modules )
     # Mehrdad: Prune
-    from DG_Prune import DG_Pruner, TaylorImportance, MagnitudeImportance, RigLImportance
+    from DG_Prune import DG_Pruner, TaylorImportance, MagnitudeImportance, RigLImportance, PrunableConv2d
     dgPruner = None
     if args.prune:
         dgPruner = DG_Pruner()
@@ -221,7 +206,16 @@ def main(args):
         dgPruner.dump_sparsity_stat(model, args.output_dir, 0)
         dgPruner.sense_analyzers_from_file('DG_Prune/sense_resnet50.json')
         dgPruner.add_custom_pruning(model, MagnitudeImportance)
-    #
+        if args.fuse_bn:
+            # Mehrdad: Fuse
+            from DG_Prune.FuseHook import get_modules_to_fuse
+            fuse_type_list = [ [PrunableConv2d, nn.BatchNorm2d] ]
+            for image, _ in data_loader_test:
+                sample_image = image[0].unsqueeze(0)
+                break
+            modules_to_fuse = get_modules_to_fuse(model, fuse_type_list, sample_image)
+            dgPruner.attach_bn_to_prunables(model, modules_to_fuse)
+    # 
 
     if args.distributed and args.sync_bn:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
@@ -288,6 +282,7 @@ def parse_args():
     parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                         help='start epoch')
     parser.add_argument('--prune', action='store_true', help='use pruning')
+    parser.add_argument('--fuse-bn', action='store_true', help='fuse bn in pruning')
     parser.add_argument(
         "--cache-dataset",
         dest="cache_dataset",
