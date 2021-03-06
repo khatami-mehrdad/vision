@@ -186,10 +186,10 @@ def main(args):
     val_dir = os.path.join(args.data_path, 'val')
     dataset, dataset_test, train_sampler, test_sampler = load_data(train_dir, val_dir,
                                                                    args.cache_dataset, args.distributed)
-    dataset.samples = [dataset.samples[idx] for idx in range(1024)]
-    dataset.targets = [dataset.targets[idx] for idx in range(1024)]
-    dataset_test.samples = [dataset.samples[idx] for idx in range(1024)]
-    dataset_test.targets = [dataset.targets[idx] for idx in range(1024)]
+    # dataset.samples = [dataset.samples[idx] for idx in range(1024)]
+    # dataset.targets = [dataset.targets[idx] for idx in range(1024)]
+    # dataset_test.samples = [dataset.samples[idx] for idx in range(1024)]
+    # dataset_test.targets = [dataset.targets[idx] for idx in range(1024)]
                                                                    
     data_loader = torch.utils.data.DataLoader(
         dataset, batch_size=args.batch_size,
@@ -198,11 +198,6 @@ def main(args):
     data_loader_test = torch.utils.data.DataLoader(
         dataset_test, batch_size=args.batch_size,
         sampler=test_sampler, num_workers=args.workers, pin_memory=True)
-
-    dataset.samples = [dataset.samples[idx] for idx in range(1000)]
-    dataset.targets = [dataset.targets[idx] for idx in range(1000)]
-    dataset_test.samples = [dataset.samples[idx] for idx in range(100)]
-    dataset_test.targets = [dataset.targets[idx] for idx in range(100)]
 
     print("Creating model")
     model = torchvision.models.__dict__[args.model](pretrained=args.pretrained)
